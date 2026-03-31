@@ -8,6 +8,7 @@ import {
   sha256,
   sourceDisplayName,
   summarizeChangeTitle,
+  truncateText,
   toArray,
 } from "./utils.js";
 
@@ -56,6 +57,76 @@ function pickPageContent(target, html) {
 
   const selectedText = normalizeSpace(nodes.text());
   return selectedText || nodes.html() || html;
+}
+
+function hasMatch(text, patterns) {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function inferTargetAvailability(target, html, selectedContent) {
+  const fullText = normalizeSpace(loadHtml(html).text()).toLowerCase();
+  const selectedText = normalizeSpace(selectedContent).toLowerCase();
+  const sourceText = `${fullText}\n${selectedText}\n${String(html || "").toLowerCase()}`;
+
+  if (!sourceText.trim()) {
+    return {
+      status: "unknown",
+      detail: "empty response",
+    };
+  }
+
+  if (target.css_selector && target.detection_mode === "selector_appears") {
+    const $ = loadHtml(html);
+    const found = $(target.css_selector).length > 0;
+    return {
+      status: found ? "in_stock" : "out_of_stock",
+      detail: found ? `selector appeared: ${target.css_selector}` : `selector missing: ${target.css_selector}`,
+    };
+  }
+
+  if (target.css_selector && target.detection_mode === "selector_disappears") {
+    const $ = loadHtml(html);
+    const found = $(target.css_selector).length > 0;
+    return {
+      status: found ? "out_of_stock" : "in_stock",
+      detail: found ? `selector present: ${target.css_selector}` : `selector disappeared: ${target.css_selector}`,
+    };
+  }
+
+  const outOfStockPatterns = [
+    /out of stock/i,
+    /currently out of stock/i,
+    /orders? .* suspended/i,
+    /sold out/i,
+    /page-error/i,
+    /unavailable/i,
+  ];
+  const inStockPatterns = [
+    /add to cart/i,
+    /order now/i,
+    /configure/i,
+    /choose billing cycle/i,
+    /product configuration/i,
+  ];
+
+  if (hasMatch(sourceText, outOfStockPatterns)) {
+    return {
+      status: "out_of_stock",
+      detail: "out of stock markers detected",
+    };
+  }
+
+  if (hasMatch(sourceText, inStockPatterns)) {
+    return {
+      status: "in_stock",
+      detail: "order controls detected",
+    };
+  }
+
+  return {
+    status: "unknown",
+    detail: "no clear stock markers detected",
+  };
 }
 
 function firstText(value) {
@@ -158,35 +229,49 @@ export async function inspectTarget(target, previousState = {}, options = {}) {
     const title = extractHtmlTitle(html) || sourceDisplayName(target);
     const baseline = !previousState.last_hash;
     const changed = !baseline && previousState.last_hash !== hash;
-    const detail = target.css_selector ? `selector=${target.css_selector}` : title;
+    const availability = inferTargetAvailability(target, html, content);
+    const previousAvailability = previousState.last_availability_status || "unknown";
+    const availabilityChanged = !baseline && previousAvailability !== availability.status;
 
     const state = {
       ...previousState,
       last_hash: hash,
       last_title: title,
       last_status: "ok",
-      last_detail: detail,
+      last_detail: availability.detail,
+      last_availability_status: availability.status,
+      last_availability_detail: availability.detail,
       last_checked_at: checkedAt,
-      last_change_at: changed ? checkedAt : previousState.last_change_at || null,
+      last_change_at: changed || availabilityChanged ? checkedAt : previousState.last_change_at || null,
     };
 
     const result = {
       ok: true,
       id: target.id,
       name: target.name,
-      status: changed ? "changed" : "ok",
-      detail: changed ? "content changed" : detail,
+      status: changed || availabilityChanged ? "changed" : "ok",
+      detail: availabilityChanged ? "availability changed" : changed ? "content changed" : availability.detail,
+      availability_status: availability.status,
+      availability_detail: availability.detail,
       open_url: target.open_url || target.url,
       latest_title: title,
     };
 
-    const notification = changed
+    const availabilityLabel =
+      availability.status === "in_stock"
+        ? "有货 / In Stock"
+        : availability.status === "out_of_stock"
+        ? "售罄 / Out of Stock"
+        : "未知 / Unknown";
+
+    const notification = changed || availabilityChanged
       ? {
           title: summarizeChangeTitle("target", target),
           text: [
             sourceDisplayName(target),
-            "状态: 页面内容有更新",
-            `标题: ${title}`,
+            `库存状态: ${availabilityLabel}`,
+            `识别依据: ${availability.detail}`,
+            `页面标题: ${title}`,
             `打开: ${target.open_url || target.url}`,
           ].join("\n"),
         }
@@ -227,6 +312,12 @@ export async function inspectFeed(feed, previousState = {}, options = {}) {
     const previousSeen = new Set(previousState.seen_ids || []);
     const baseline = previousSeen.size === 0;
     const fresh = baseline ? [] : matched.filter((entry) => !previousSeen.has(entry.key));
+    const freshPreview = fresh.slice(0, 5).map((entry) => ({
+      title: entry.title || "Untitled",
+      published: entry.published || "",
+      link: entry.link || "",
+      summary: truncateText(entry.summary || "", 220),
+    }));
 
     const state = {
       ...previousState,
@@ -248,9 +339,14 @@ export async function inspectFeed(feed, previousState = {}, options = {}) {
       id: feed.id,
       name: feed.name,
       status: fresh.length ? "changed" : "ok",
-      detail: latest ? `matched=${matched.length}` : "no matched items",
+      detail: fresh.length ? `new_items=${fresh.length}` : latest ? `matched=${matched.length}` : "no matched items",
+      matched_count: matched.length,
+      new_items_count: fresh.length,
+      new_items: freshPreview,
       latest_title: latest?.title || "",
       latest_published: latest?.published || "",
+      latest_summary: truncateText(latest?.summary || "", 220),
+      latest_link: latest?.link || feed.url,
       open_url: latest?.link || feed.url,
     };
 
@@ -259,12 +355,15 @@ export async function inspectFeed(feed, previousState = {}, options = {}) {
           title: summarizeChangeTitle("feed", feed),
           text: [
             sourceDisplayName(feed),
-            ...fresh.slice(0, 3).map((entry, index) => {
-              const published = entry.published ? ` | ${entry.published}` : "";
-              const link = entry.link ? `\n${entry.link}` : "";
-              return `${index + 1}. ${entry.title || "Untitled"}${published}${link}`;
-            }),
-          ].join("\n"),
+            fresh[0]?.title || "Untitled",
+            truncateText(fresh[0]?.summary || "", 260),
+            "",
+            "Continue reading:",
+            fresh[0]?.link || feed.url,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          preview_url: fresh[0]?.link || feed.url,
         }
       : null;
 

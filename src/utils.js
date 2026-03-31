@@ -20,6 +20,14 @@ export function normalizeSpace(text) {
   return String(text ?? "").replace(/\s+/g, " ").trim();
 }
 
+export function truncateText(text, max = 280) {
+  const normalized = normalizeSpace(text);
+  if (normalized.length <= max) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, max - 1))}…`;
+}
+
 export function ensureBoolean(value, fallback = false) {
   if (value === undefined || value === null) {
     return fallback;
