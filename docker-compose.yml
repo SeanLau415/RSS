@@ -1,0 +1,12 @@
+services:
+  showtimes-vps:
+    build:
+      context: .
+    container_name: showtimes-vps
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ./data:/app/data
