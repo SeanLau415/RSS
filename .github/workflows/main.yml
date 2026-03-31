@@ -1,0 +1,51 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Syntax check
+        shell: bash
+        run: |
+          for f in src/*.js test/*.js; do
+            node --check "$f"
+          done
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Docker image
+        run: docker build -t showtimes-vps-service:ci .
+
+      - name: Docker smoke test
+        shell: bash
+        run: |
+          docker run -d --name showtimes-smoke -p 18080:8080 \
+            -e VPS_SHARED_TOKEN=test-token \
+            -e RELAY_URL= \
+            -e CONFIG_PATH=/app/config.example.yaml \
+            -e STATE_PATH=/tmp/state.json \
+            -e SCHEDULER_ENABLED=false \
+            showtimes-vps-service:ci
+
+          sleep 3
+          curl -f http://127.0.0.1:18080/health
+          docker rm -f showtimes-smoke
