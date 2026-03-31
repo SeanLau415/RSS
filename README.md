@@ -1,5 +1,3 @@
-# Showtimes VPS Service
-
 Node.js crawler backend for the Cloudflare Worker control layer.
 
 ## What It Does
