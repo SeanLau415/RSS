@@ -40,6 +40,7 @@ async function setupHarness(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "showtimes-vps-"));
   const state = {
     pageVersion: 1,
+    pageAvailability: "out_of_stock",
     feedItems: [
       {
         id: "entry-1",
@@ -54,9 +55,13 @@ async function setupHarness(t) {
 
   const sourceServer = http.createServer((request, response) => {
     if (request.url === "/page") {
+      const availabilityMarkup =
+        state.pageAvailability === "in_stock"
+          ? '<button type="button">Add to Cart</button>'
+          : '<div class="stock-state">Currently out of stock</div>';
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(
-        `<!doctype html><html><head><title>Page ${state.pageVersion}</title></head><body>version-${state.pageVersion}</body></html>`
+        `<!doctype html><html><head><title>Page ${state.pageVersion}</title></head><body>version-${state.pageVersion} ${availabilityMarkup}</body></html>`
       );
       return;
     }
@@ -198,6 +203,7 @@ test("core flows work end to end", async (t) => {
   assert.equal(state.relayMessages.length, 0);
 
   state.pageVersion = 2;
+  state.pageAvailability = "in_stock";
   state.feedItems.unshift({
     id: "entry-2",
     title: "Entry Two",
@@ -221,6 +227,7 @@ test("core flows work end to end", async (t) => {
   });
 
   state.pageVersion = 3;
+  state.pageAvailability = "out_of_stock";
   state.feedItems.unshift({
     id: "entry-3",
     title: "Entry Three",
