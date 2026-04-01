@@ -291,7 +291,34 @@ test("core flows work end to end", async (t) => {
   assert.equal(targetsAfterRemove.json.targets.length, 1);
   assert.equal(feedsAfterRemove.json.feeds.length, 1);
 
+  await api("/targets/add", {
+    method: "POST",
+    body: JSON.stringify({ name: "Extra Target 2", url: "https://example.test/target-2" }),
+  });
+  await api("/feeds/add", {
+    method: "POST",
+    body: JSON.stringify({ url: "https://example.test/feed-2.xml" }),
+  });
+
+  const clearedTargets = await api("/targets/clear", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  const clearedFeeds = await api("/feeds/clear", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  assert.equal(clearedTargets.status, 200);
+  assert.equal(clearedTargets.json.removed, 2);
+  assert.equal(clearedFeeds.status, 200);
+  assert.equal(clearedFeeds.json.removed, 2);
+
+  const targetsAfterClear = await api("/targets");
+  const feedsAfterClear = await api("/feeds");
+  assert.equal(targetsAfterClear.json.targets.length, 0);
+  assert.equal(feedsAfterClear.json.feeds.length, 0);
+
   const persisted = yaml.load(await readFile(configPath, "utf8"));
-  assert.equal(persisted.targets.length, 1);
-  assert.equal(persisted.rss_feeds.length, 1);
+  assert.equal(persisted.targets.length, 0);
+  assert.equal(persisted.rss_feeds.length, 0);
 });

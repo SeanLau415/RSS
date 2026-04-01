@@ -136,6 +136,10 @@ export function createHttpServer(service) {
         return jsonResponse(response, 200, await service.removeTarget(body.query));
       }
 
+      if (request.method === "POST" && url.pathname === "/targets/clear") {
+        return jsonResponse(response, 200, await service.clearTargets());
+      }
+
       if (request.method === "POST" && url.pathname === "/feeds/add") {
         const body = await readJsonBody(request);
         return jsonResponse(response, 200, await service.addFeed(body));
@@ -144,6 +148,10 @@ export function createHttpServer(service) {
       if (request.method === "POST" && url.pathname === "/feeds/remove") {
         const body = await readJsonBody(request);
         return jsonResponse(response, 200, await service.removeFeed(body.query));
+      }
+
+      if (request.method === "POST" && url.pathname === "/feeds/clear") {
+        return jsonResponse(response, 200, await service.clearFeeds());
       }
 
       return jsonResponse(response, 404, { ok: false, error: "Not found" });

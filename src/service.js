@@ -555,4 +555,32 @@ export class CrawlerService {
       message: `已移除 RSS 源：${source.name}`,
     };
   }
+
+  async clearTargets() {
+    const removed = this.config.targets.length;
+    this.config.targets = [];
+    this.state.targets = {};
+    await this.persistConfig();
+    await this.persistState();
+    this.refreshSchedules(true);
+    return {
+      ok: true,
+      removed,
+      message: `Cleared all VPS / targets: ${removed}`,
+    };
+  }
+
+  async clearFeeds() {
+    const removed = this.config.feeds.length;
+    this.config.feeds = [];
+    this.state.feeds = {};
+    await this.persistConfig();
+    await this.persistState();
+    this.refreshSchedules(true);
+    return {
+      ok: true,
+      removed,
+      message: `Cleared all RSS feeds: ${removed}`,
+    };
+  }
 }
