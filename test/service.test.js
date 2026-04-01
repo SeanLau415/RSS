@@ -217,12 +217,19 @@ test("core flows work end to end", async (t) => {
   assert.equal(changedManual.json.summary.changes, 2);
   assert.equal(state.relayMessages.length, 0);
 
+  const previewBeforeView = await api("/feeds/preview", {
+    method: "POST",
+    body: JSON.stringify({ query: "local-feed", limit: 5 }),
+  });
+  assert.equal(previewBeforeView.status, 200);
+  assert.equal(previewBeforeView.json.unread_count, 2);
+
   const firstView = await api("/feeds/view", {
     method: "POST",
     body: JSON.stringify({ query: "local-feed", limit: 5 }),
   });
   assert.equal(firstView.status, 200);
-  assert.equal(firstView.json.new_items_count, 1);
+  assert.equal(firstView.json.new_items_count, 2);
   assert.equal(firstView.json.new_items[0].title, "Entry Two");
 
   const secondView = await api("/feeds/view", {

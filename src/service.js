@@ -202,6 +202,7 @@ export class CrawlerService {
         if (source.kind === "feed" && Array.isArray(outcome.state.last_new_item_keys) && outcome.state.last_new_item_keys.length) {
           bucket[source.id] = {
             ...bucket[source.id],
+            delivered_initialized: true,
             delivered_ids: compactUnique(
               [...outcome.state.last_new_item_keys, ...(bucket[source.id].delivered_ids || [])],
               5000
@@ -263,6 +264,42 @@ export class CrawlerService {
     return this.runSourceCheck(source, { manual: options.manual !== false });
   }
 
+  collectFeedUnread(snapshot, limit = 5) {
+    const recentItems = Array.isArray(snapshot.last_recent_items) ? snapshot.last_recent_items : [];
+    const deliveredInitialized = snapshot.delivered_initialized === true;
+    const delivered = new Set(snapshot.delivered_ids || []);
+    const unread = deliveredInitialized
+      ? recentItems.filter((item) => item?.key && !delivered.has(item.key))
+      : recentItems;
+
+    return unread.slice(0, ensureInteger(limit, 5));
+  }
+
+  async previewFeed(query, options = {}) {
+    const source = this.resolveSource(query, ["feed"]);
+    if (options.refresh !== false) {
+      await this.runSourceCheck(source, { manual: true });
+    }
+
+    const bucket = this.stateBucket(source);
+    const snapshot = bucket[source.id] || {};
+    const unread = this.collectFeedUnread(snapshot, options.limit);
+
+    return {
+      ok: true,
+      id: source.id,
+      name: source.name,
+      unread_count: unread.length,
+      latest_title: snapshot.last_latest_title || "",
+      latest_published: snapshot.last_latest_published || "",
+      latest_summary: snapshot.last_latest_summary || "",
+      latest_link: snapshot.last_latest_link || source.url,
+      checked_at: snapshot.last_checked_at || "",
+      viewed_at: snapshot.last_viewed_at || "",
+      open_url: snapshot.last_latest_link || source.open_url || source.url,
+    };
+  }
+
   async viewFeed(query, options = {}) {
     const source = this.resolveSource(query, ["feed"]);
     if (options.refresh !== false) {
@@ -271,10 +308,7 @@ export class CrawlerService {
 
     const bucket = this.stateBucket(source);
     const snapshot = bucket[source.id] || {};
-    const recentItems = Array.isArray(snapshot.last_recent_items) ? snapshot.last_recent_items : [];
-    const delivered = new Set(snapshot.delivered_ids || []);
-    const limit = ensureInteger(options.limit, 5);
-    const unread = recentItems.filter((item) => item?.key && !delivered.has(item.key)).slice(0, limit);
+    const unread = this.collectFeedUnread(snapshot, options.limit);
 
     bucket[source.id] = {
       ...snapshot,
@@ -286,6 +320,7 @@ export class CrawlerService {
       last_viewed_at: nowIso(),
     };
     await this.persistState();
+    const remainingUnreadCount = this.collectFeedUnread(bucket[source.id], Number.MAX_SAFE_INTEGER).length;
 
     return {
       ok: true,
@@ -295,6 +330,7 @@ export class CrawlerService {
       detail: unread.length ? `unread=${unread.length}` : "no unread items",
       checked_at: snapshot.last_checked_at || "",
       viewed_at: bucket[source.id].last_viewed_at,
+      unread_count: remainingUnreadCount,
       new_items_count: unread.length,
       new_items: unread.map(({ key, ...item }) => item),
       latest_title: snapshot.last_latest_title || "",

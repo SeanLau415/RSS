@@ -431,19 +431,14 @@ export async function inspectFeed(feed, previousState = {}, options = {}) {
       link: entry.link || "",
       summary: truncateText(entry.summary || "", 220),
     }));
-    const deliveredIds =
-      previousState.delivered_initialized === true
-        ? previousState.delivered_ids || []
-        : matched.map((entry) => entry.key);
-
     const state = {
       ...previousState,
       seen_ids: compactUnique(
         [...matched.map((entry) => entry.key), ...(previousState.seen_ids || [])],
         5000
       ),
-      delivered_initialized: true,
-      delivered_ids: compactUnique(deliveredIds, 5000),
+      delivered_initialized: previousState.delivered_initialized === true,
+      delivered_ids: compactUnique(previousState.delivered_ids || [], 5000),
       last_status: "ok",
       last_detail: latest ? `matched=${matched.length}` : "no matched items",
       last_checked_at: checkedAt,

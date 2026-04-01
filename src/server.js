@@ -101,6 +101,18 @@ export function createHttpServer(service) {
         );
       }
 
+      if (request.method === "POST" && url.pathname === "/feeds/preview") {
+        const body = await readJsonBody(request);
+        return jsonResponse(
+          response,
+          200,
+          await service.previewFeed(body.query, {
+            refresh: body.refresh !== false,
+            limit: body.limit,
+          })
+        );
+      }
+
       if (request.method === "POST" && url.pathname === "/sources/control") {
         const body = await readJsonBody(request);
         return jsonResponse(
