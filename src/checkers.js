@@ -26,6 +26,7 @@ const xmlParser = new XMLParser({
 
 const DEFAULT_BROWSER_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+const RSS_FALLBACK_API = "https://api.rss2json.com/v1/api.json?rss_url=";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -84,6 +85,63 @@ async function fetchText(url, options = {}) {
   }
 
   throw lastError || new Error("fetch failed");
+}
+
+async function fetchJson(url, options = {}) {
+  const timeoutSeconds = options.timeoutSeconds || 30;
+  let lastError = null;
+  const maxAttempts = 4;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+
+    try {
+      const response = await fetch(url, {
+        redirect: "follow",
+        signal: controller.signal,
+        headers: {
+          "user-agent": DEFAULT_BROWSER_USER_AGENT,
+          accept: "application/json,text/plain,*/*",
+          "accept-language": "en-US,en;q=0.9",
+          "cache-control": "no-cache",
+          pragma: "no-cache",
+        },
+      });
+
+      const text = await response.text();
+      let data = null;
+      try {
+        data = JSON.parse(text);
+      } catch (error) {
+        if (attempt < maxAttempts) {
+          await sleep(400 * attempt);
+          continue;
+        }
+        throw new Error("invalid json");
+      }
+
+      if (!response.ok) {
+        if (attempt < maxAttempts && [408, 425, 429, 500, 502, 503, 504].includes(response.status)) {
+          await sleep(400 * attempt);
+          continue;
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return data;
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        await sleep(400 * attempt);
+        continue;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw lastError || new Error("fetch json failed");
 }
 
 function pickPageContent(target, html) {
@@ -323,6 +381,63 @@ function buildFeedEntries(xml) {
   return entries;
 }
 
+function canonicalFeedUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "newsrss.bbc.co.uk") {
+      const match = parsed.pathname.match(/\/rss\/newsonline_uk_edition\/(.+?)\/rss\.xml$/i);
+      if (match?.[1]) {
+        return `https://feeds.bbci.co.uk/news/${match[1]}/rss.xml`;
+      }
+    }
+  } catch (error) {
+    return url;
+  }
+
+  return url;
+}
+
+function normalizeFallbackItem(raw) {
+  const title = normalizeSpace(raw?.title || "");
+  const link = normalizeSpace(raw?.link || "");
+  const published = normalizeSpace(raw?.pubDate || raw?.published || "");
+  const summary = normalizeSpace(raw?.description || raw?.content || "");
+  const id = normalizeSpace(raw?.guid || raw?.id || link) || sha256(`${title}|${published}|${summary}`);
+  return {
+    id,
+    title,
+    link,
+    published,
+    summary,
+    key: entryKey({ id, title, link, published }),
+  };
+}
+
+async function buildFeedEntriesWithFallback(feed, options = {}) {
+  try {
+    const xml = await fetchText(feed.url, options);
+    return buildFeedEntries(xml);
+  } catch (directError) {
+    const fallbackUrl = `${RSS_FALLBACK_API}${encodeURIComponent(canonicalFeedUrl(feed.url))}`;
+    const data = await fetchJson(fallbackUrl, options);
+
+    if (data?.status !== "ok" || !Array.isArray(data?.items)) {
+      const message = normalizeSpace(data?.message || data?.error || "rss fallback failed");
+      throw new Error(message || String(directError?.message || directError));
+    }
+
+    const items = data.items
+      .map(normalizeFallbackItem)
+      .filter((entry) => entry.title || entry.link || entry.summary);
+
+    if (!items.length) {
+      throw new Error("rss fallback returned no items");
+    }
+
+    return items;
+  }
+}
+
 export async function inspectTarget(target, previousState = {}, options = {}) {
   const checkedAt = nowIso();
 
@@ -411,8 +526,7 @@ export async function inspectFeed(feed, previousState = {}, options = {}) {
   const checkedAt = nowIso();
 
   try {
-    const xml = await fetchText(feed.url, options);
-    const entries = buildFeedEntries(xml);
+    const entries = await buildFeedEntriesWithFallback(feed, options);
     const matched = entries.filter((entry) => matchesKeywords(entry, feed.keywords || []));
     const latest = matched[0] || entries[0] || null;
     const previousSeen = new Set(previousState.seen_ids || []);
