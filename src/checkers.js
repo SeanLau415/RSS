@@ -34,8 +34,9 @@ function sleep(ms) {
 async function fetchText(url, options = {}) {
   const timeoutSeconds = options.timeoutSeconds || 30;
   let lastError = null;
+  const maxAttempts = 4;
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
 
@@ -63,8 +64,8 @@ async function fetchText(url, options = {}) {
 
       const text = await response.text();
       if (!response.ok) {
-        if (attempt < 2 && [408, 425, 429, 500, 502, 503, 504].includes(response.status)) {
-          await sleep(500);
+        if (attempt < maxAttempts && [408, 425, 429, 500, 502, 503, 504].includes(response.status)) {
+          await sleep(400 * attempt);
           continue;
         }
         throw new Error(`HTTP ${response.status}`);
@@ -73,8 +74,8 @@ async function fetchText(url, options = {}) {
       return text;
     } catch (error) {
       lastError = error;
-      if (attempt < 2) {
-        await sleep(500);
+      if (attempt < maxAttempts) {
+        await sleep(400 * attempt);
         continue;
       }
     } finally {
@@ -417,12 +418,23 @@ export async function inspectFeed(feed, previousState = {}, options = {}) {
     const previousSeen = new Set(previousState.seen_ids || []);
     const baseline = previousSeen.size === 0;
     const fresh = baseline ? [] : matched.filter((entry) => !previousSeen.has(entry.key));
+    const recentItems = matched.slice(0, 10).map((entry) => ({
+      key: entry.key,
+      title: entry.title || "Untitled",
+      published: entry.published || "",
+      link: entry.link || feed.url,
+      summary: truncateText(entry.summary || "", 220),
+    }));
     const freshPreview = fresh.slice(0, 5).map((entry) => ({
       title: entry.title || "Untitled",
       published: entry.published || "",
       link: entry.link || "",
       summary: truncateText(entry.summary || "", 220),
     }));
+    const deliveredIds =
+      previousState.delivered_initialized === true
+        ? previousState.delivered_ids || []
+        : matched.map((entry) => entry.key);
 
     const state = {
       ...previousState,
@@ -430,6 +442,8 @@ export async function inspectFeed(feed, previousState = {}, options = {}) {
         [...matched.map((entry) => entry.key), ...(previousState.seen_ids || [])],
         5000
       ),
+      delivered_initialized: true,
+      delivered_ids: compactUnique(deliveredIds, 5000),
       last_status: "ok",
       last_detail: latest ? `matched=${matched.length}` : "no matched items",
       last_checked_at: checkedAt,
@@ -437,6 +451,8 @@ export async function inspectFeed(feed, previousState = {}, options = {}) {
       last_matched_count: matched.length,
       last_new_items_count: fresh.length,
       last_new_items: freshPreview,
+      last_new_item_keys: fresh.slice(0, 20).map((entry) => entry.key),
+      last_recent_items: recentItems,
       last_latest_title: latest?.title || "",
       last_latest_published: latest?.published || "",
       last_latest_summary: truncateText(latest?.summary || "", 220),
