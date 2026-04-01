@@ -3,7 +3,7 @@ import { inspectFeed, inspectTarget } from "./checkers.js";
 import { loadState, saveState } from "./state-store.js";
 import { ensureInteger, normalizeSpace, nowIso, sourceDisplayName, stableOffsetMs } from "./utils.js";
 
-function clonePublicSource(source) {
+function clonePublicSource(source, snapshot = {}) {
   return {
     id: source.id,
     name: source.name,
@@ -15,6 +15,20 @@ function clonePublicSource(source) {
     interval_minutes: source.check_interval_minutes,
     detection_mode: source.detection_mode || undefined,
     keywords: source.kind === "feed" ? source.keywords || [] : undefined,
+    last_status: snapshot.last_status || "",
+    last_detail: snapshot.last_detail || "",
+    last_checked_at: snapshot.last_checked_at || "",
+    last_change_at: snapshot.last_change_at || "",
+    last_title: snapshot.last_title || "",
+    last_availability_status: snapshot.last_availability_status || "",
+    last_availability_detail: snapshot.last_availability_detail || "",
+    last_latest_title: snapshot.last_latest_title || "",
+    last_latest_published: snapshot.last_latest_published || "",
+    last_latest_summary: snapshot.last_latest_summary || "",
+    last_latest_link: snapshot.last_latest_link || "",
+    last_matched_count: snapshot.last_matched_count ?? 0,
+    last_new_items_count: snapshot.last_new_items_count ?? 0,
+    last_new_items: snapshot.last_new_items || [],
   };
 }
 
@@ -100,14 +114,14 @@ export class CrawlerService {
   listTargets() {
     return {
       ok: true,
-      targets: this.config.targets.map(clonePublicSource),
+      targets: this.config.targets.map((source) => clonePublicSource(source, this.state.targets[source.id] || {})),
     };
   }
 
   listFeeds() {
     return {
       ok: true,
-      feeds: this.config.feeds.map(clonePublicSource),
+      feeds: this.config.feeds.map((source) => clonePublicSource(source, this.state.feeds[source.id] || {})),
     };
   }
 

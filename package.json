@@ -6,7 +6,8 @@
   "description": "Non-Python VPS crawler backend for Showtimes",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "validate:sources": "node scripts/validate-sources.js"
   },
   "engines": {
     "node": ">=22"

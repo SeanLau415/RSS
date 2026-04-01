@@ -16,32 +16,73 @@ const xmlParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
   trimValues: true,
+  processEntities: {
+    enabled: true,
+    maxTotalExpansions: 10000,
+    maxExpandedLength: 1000000,
+    maxEntityCount: 5000,
+  },
 });
+
+const DEFAULT_BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function fetchText(url, options = {}) {
   const timeoutSeconds = options.timeoutSeconds || 30;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+  let lastError = null;
 
-  try {
-    const response = await fetch(url, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        "user-agent": "showtimes-vps-service/1.0",
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+
+    try {
+      const requestUrl = new URL(url);
+      const headers = {
+        "user-agent": DEFAULT_BROWSER_USER_AGENT,
         accept: "text/html,application/xhtml+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
-      },
-    });
+        "accept-language": "en-US,en;q=0.9",
+        "cache-control": "no-cache",
+        pragma: "no-cache",
+      };
 
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      if (/nube\.sh$/i.test(requestUrl.hostname) || /nube\.sh$/i.test(requestUrl.hostname.replace(/^[^.]+\./, ""))) {
+        headers.accept = "application/json, text/plain, */*";
+        headers.origin = "https://nube.sh";
+        headers.referer = "https://nube.sh/zh-cn";
+      }
+
+      const response = await fetch(url, {
+        redirect: "follow",
+        signal: controller.signal,
+        headers,
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        if (attempt < 2 && [408, 425, 429, 500, 502, 503, 504].includes(response.status)) {
+          await sleep(500);
+          continue;
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return text;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) {
+        await sleep(500);
+        continue;
+      }
+    } finally {
+      clearTimeout(timer);
     }
-
-    return text;
-  } finally {
-    clearTimeout(timer);
   }
+
+  throw lastError || new Error("fetch failed");
 }
 
 function pickPageContent(target, html) {
@@ -63,7 +104,69 @@ function hasMatch(text, patterns) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+function parseJsonAvailability(target, rawText) {
+  const trimmed = String(rawText || "").trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return null;
+  }
+
+  try {
+    const requestUrl = new URL(target.url);
+    const requestedRegion = String(requestUrl.searchParams.get("region") || "").trim().toUpperCase();
+    const parsed = JSON.parse(trimmed);
+    const data = parsed?.data;
+    if (!data || typeof data !== "object") {
+      return null;
+    }
+
+    const vmSpecs = Array.isArray(data.vmSpecComponents) ? data.vmSpecComponents : [];
+    const networkSpecs = Array.isArray(data.networkSpecComponents) ? data.networkSpecComponents : [];
+    const zones = Array.isArray(data.zones) ? data.zones : [];
+
+    const hasVmSpecs = vmSpecs.some((component) => Array.isArray(component?.specifications) && component.specifications.length > 0);
+    const hasChinaOptimized = networkSpecs.some((component) =>
+      Array.isArray(component?.specifications) &&
+      component.specifications.some((spec) =>
+        /china-optimized/i.test(String(spec?.productName || "")) ||
+        /china_direct/i.test(String(spec?.name || ""))
+      )
+    );
+
+    const hasWantedZone = requestedRegion
+      ? zones.some((zone) => new RegExp(requestedRegion, "i").test(String(zone?.name || "")))
+      : zones.length > 0;
+
+    if (hasVmSpecs && hasChinaOptimized && hasWantedZone) {
+      return {
+        status: "in_stock",
+        detail: requestedRegion
+          ? `nube api returned ${requestedRegion} + China-Optimized specs`
+          : "nube api returned China-Optimized specs",
+      };
+    }
+
+    if (hasVmSpecs) {
+      return {
+        status: "in_stock",
+        detail: "nube api returned orderable vm specifications",
+      };
+    }
+
+    return {
+      status: "unknown",
+      detail: "nube api returned data but no orderable specs",
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
 function inferTargetAvailability(target, html, selectedContent) {
+  const jsonAvailability = parseJsonAvailability(target, html);
+  if (jsonAvailability) {
+    return jsonAvailability;
+  }
+
   const fullText = normalizeSpace(loadHtml(html).text()).toLowerCase();
   const selectedText = normalizeSpace(selectedContent).toLowerCase();
   const sourceText = `${fullText}\n${selectedText}\n${String(html || "").toLowerCase()}`;
@@ -228,7 +331,6 @@ export async function inspectTarget(target, previousState = {}, options = {}) {
     const hash = sha256(content);
     const title = extractHtmlTitle(html) || sourceDisplayName(target);
     const baseline = !previousState.last_hash;
-    const changed = !baseline && previousState.last_hash !== hash;
     const availability = inferTargetAvailability(target, html, content);
     const previousAvailability = previousState.last_availability_status || "unknown";
     const availabilityChanged = !baseline && previousAvailability !== availability.status;
@@ -242,15 +344,18 @@ export async function inspectTarget(target, previousState = {}, options = {}) {
       last_availability_status: availability.status,
       last_availability_detail: availability.detail,
       last_checked_at: checkedAt,
-      last_change_at: changed || availabilityChanged ? checkedAt : previousState.last_change_at || null,
+      last_change_at: availabilityChanged ? checkedAt : previousState.last_change_at || null,
     };
 
     const result = {
       ok: true,
       id: target.id,
       name: target.name,
-      status: changed || availabilityChanged ? "changed" : "ok",
-      detail: availabilityChanged ? "availability changed" : changed ? "content changed" : availability.detail,
+      status: availabilityChanged ? "changed" : "ok",
+      detail: availabilityChanged
+        ? `availability changed: ${previousAvailability} -> ${availability.status}`
+        : availability.detail,
+      checked_at: checkedAt,
       availability_status: availability.status,
       availability_detail: availability.detail,
       open_url: target.open_url || target.url,
@@ -264,7 +369,7 @@ export async function inspectTarget(target, previousState = {}, options = {}) {
         ? "售罄 / Out of Stock"
         : "未知 / Unknown";
 
-    const notification = changed || availabilityChanged
+    const notification = availabilityChanged
       ? {
           title: summarizeChangeTitle("target", target),
           text: [
@@ -277,7 +382,7 @@ export async function inspectTarget(target, previousState = {}, options = {}) {
         }
       : null;
 
-    return { result, state, changed, notification };
+    return { result, state, changed: availabilityChanged, notification };
   } catch (error) {
     const message = String(error?.message || error);
     return {
@@ -323,14 +428,18 @@ export async function inspectFeed(feed, previousState = {}, options = {}) {
       ...previousState,
       seen_ids: compactUnique(
         [...matched.map((entry) => entry.key), ...(previousState.seen_ids || [])],
-        200
+        5000
       ),
       last_status: "ok",
       last_detail: latest ? `matched=${matched.length}` : "no matched items",
       last_checked_at: checkedAt,
       last_change_at: fresh.length ? checkedAt : previousState.last_change_at || null,
+      last_matched_count: matched.length,
+      last_new_items_count: fresh.length,
+      last_new_items: freshPreview,
       last_latest_title: latest?.title || "",
       last_latest_published: latest?.published || "",
+      last_latest_summary: truncateText(latest?.summary || "", 220),
       last_latest_link: latest?.link || feed.url,
     };
 
@@ -340,6 +449,7 @@ export async function inspectFeed(feed, previousState = {}, options = {}) {
       name: feed.name,
       status: fresh.length ? "changed" : "ok",
       detail: fresh.length ? `new_items=${fresh.length}` : latest ? `matched=${matched.length}` : "no matched items",
+      checked_at: checkedAt,
       matched_count: matched.length,
       new_items_count: fresh.length,
       new_items: freshPreview,

@@ -50,7 +50,7 @@ export function createServiceFromEnv() {
     relayUrl: process.env.RELAY_URL || "",
     schedulerEnabled: envBoolean("SCHEDULER_ENABLED", true),
     schedulerPollSeconds: envInteger("SCHEDULER_POLL_SECONDS", 15),
-    checkConcurrency: envInteger("CHECK_CONCURRENCY", 4),
+    checkConcurrency: envInteger("CHECK_CONCURRENCY", 1),
   });
 }
 
