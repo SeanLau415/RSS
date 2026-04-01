@@ -1,7 +1,7 @@
 import { loadConfig, saveConfig } from "./config-store.js";
 import { inspectFeed, inspectTarget } from "./checkers.js";
 import { loadState, saveState } from "./state-store.js";
-import { ensureInteger, normalizeSpace, nowIso, sourceDisplayName, stableOffsetMs } from "./utils.js";
+import { compactUnique, ensureInteger, normalizeSpace, nowIso, sourceDisplayName, stableOffsetMs } from "./utils.js";
 
 function clonePublicSource(source, snapshot = {}) {
   return {
@@ -29,6 +29,7 @@ function clonePublicSource(source, snapshot = {}) {
     last_matched_count: snapshot.last_matched_count ?? 0,
     last_new_items_count: snapshot.last_new_items_count ?? 0,
     last_new_items: snapshot.last_new_items || [],
+    last_viewed_at: snapshot.last_viewed_at || "",
   };
 }
 
@@ -198,6 +199,16 @@ export class CrawlerService {
     if (!options.manual && source.notify_enabled && outcome.changed) {
       try {
         await this.relay(outcome.notification);
+        if (source.kind === "feed" && Array.isArray(outcome.state.last_new_item_keys) && outcome.state.last_new_item_keys.length) {
+          bucket[source.id] = {
+            ...bucket[source.id],
+            delivered_ids: compactUnique(
+              [...outcome.state.last_new_item_keys, ...(bucket[source.id].delivered_ids || [])],
+              5000
+            ),
+          };
+          await this.persistState();
+        }
       } catch (error) {
         console.error("Relay send failed", error);
       }
@@ -250,6 +261,48 @@ export class CrawlerService {
   async checkFeed(query, options = {}) {
     const source = this.resolveSource(query, ["feed"]);
     return this.runSourceCheck(source, { manual: options.manual !== false });
+  }
+
+  async viewFeed(query, options = {}) {
+    const source = this.resolveSource(query, ["feed"]);
+    if (options.refresh !== false) {
+      await this.runSourceCheck(source, { manual: true });
+    }
+
+    const bucket = this.stateBucket(source);
+    const snapshot = bucket[source.id] || {};
+    const recentItems = Array.isArray(snapshot.last_recent_items) ? snapshot.last_recent_items : [];
+    const delivered = new Set(snapshot.delivered_ids || []);
+    const limit = ensureInteger(options.limit, 5);
+    const unread = recentItems.filter((item) => item?.key && !delivered.has(item.key)).slice(0, limit);
+
+    bucket[source.id] = {
+      ...snapshot,
+      delivered_initialized: true,
+      delivered_ids: compactUnique(
+        [...unread.map((item) => item.key), ...(snapshot.delivered_ids || [])],
+        5000
+      ),
+      last_viewed_at: nowIso(),
+    };
+    await this.persistState();
+
+    return {
+      ok: true,
+      id: source.id,
+      name: source.name,
+      status: snapshot.last_status || "ok",
+      detail: unread.length ? `unread=${unread.length}` : "no unread items",
+      checked_at: snapshot.last_checked_at || "",
+      viewed_at: bucket[source.id].last_viewed_at,
+      new_items_count: unread.length,
+      new_items: unread.map(({ key, ...item }) => item),
+      latest_title: snapshot.last_latest_title || "",
+      latest_published: snapshot.last_latest_published || "",
+      latest_summary: snapshot.last_latest_summary || "",
+      latest_link: snapshot.last_latest_link || source.url,
+      open_url: snapshot.last_latest_link || source.open_url || source.url,
+    };
   }
 
   async runAutomatedOnce() {

@@ -89,6 +89,18 @@ export function createHttpServer(service) {
         return jsonResponse(response, 200, await service.checkFeed(body.query, { manual: true }));
       }
 
+      if (request.method === "POST" && url.pathname === "/feeds/view") {
+        const body = await readJsonBody(request);
+        return jsonResponse(
+          response,
+          200,
+          await service.viewFeed(body.query, {
+            refresh: body.refresh !== false,
+            limit: body.limit,
+          })
+        );
+      }
+
       if (request.method === "POST" && url.pathname === "/sources/control") {
         const body = await readJsonBody(request);
         return jsonResponse(
