@@ -1,0 +1,64 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Syntax check
+        shell: bash
+        run: |
+          for f in src/*.js test/*.js scripts/*.js; do
+            if [ -f "$f" ]; then
+              node --check "$f"
+            fi
+          done
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Docker image
+        run: docker build --pull=false -t showtimes-vps-service:ci .
+
+      - name: Docker smoke test
+        shell: bash
+        run: |
+          docker run -d --name showtimes-smoke -p 18080:8080 \
+            -e VPS_SHARED_TOKEN=test-token \
+            -e RELAY_URL= \
+            -e CONFIG_PATH=/app/config.example.yaml \
+            -e STATE_PATH=/tmp/state.json \
+            -e SCHEDULER_ENABLED=false \
+            showtimes-vps-service:ci
+
+          for i in {1..20}; do
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://127.0.0.1:18080/health
+          docker rm -f showtimes-smoke
