@@ -34,15 +34,15 @@ function clonePublicSource(source, snapshot = {}) {
 }
 
 function controlMessage(source, changes) {
-  const parts = [`已更新：${sourceDisplayName(source)}`];
+  const parts = [`Updated: ${sourceDisplayName(source)}`];
   if (changes.check_enabled !== undefined) {
-    parts.push(`自动抓取=${changes.check_enabled ? "on" : "off"}`);
+    parts.push(`auto-check=${changes.check_enabled ? "on" : "off"}`);
   }
   if (changes.notify_enabled !== undefined) {
-    parts.push(`自动推送=${changes.notify_enabled ? "on" : "off"}`);
+    parts.push(`auto-notify=${changes.notify_enabled ? "on" : "off"}`);
   }
   if (changes.enabled !== undefined) {
-    parts.push(`启用=${changes.enabled ? "on" : "off"}`);
+    parts.push(`enabled=${changes.enabled ? "on" : "off"}`);
   }
   return parts.join(" | ");
 }
@@ -479,7 +479,7 @@ export class CrawlerService {
 
     return {
       ok: true,
-      message: `已加入网页目标：${source.name}`,
+      message: `Added target: ${source.name}`,
       target: clonePublicSource(source),
     };
   }
@@ -493,7 +493,7 @@ export class CrawlerService {
     this.refreshSchedules(true);
     return {
       ok: true,
-      message: `已移除网页目标：${source.name}`,
+      message: `Removed target: ${source.name}`,
     };
   }
 
@@ -538,7 +538,7 @@ export class CrawlerService {
 
     return {
       ok: true,
-      message: `已加入 RSS 源：${source.name}`,
+      message: `Added RSS feed: ${source.name}`,
       feed: clonePublicSource(source),
     };
   }
@@ -552,7 +552,7 @@ export class CrawlerService {
     this.refreshSchedules(true);
     return {
       ok: true,
-      message: `已移除 RSS 源：${source.name}`,
+      message: `Removed RSS feed: ${source.name}`,
     };
   }
 

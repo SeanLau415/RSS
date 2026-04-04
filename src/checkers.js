@@ -480,20 +480,20 @@ export async function inspectTarget(target, previousState = {}, options = {}) {
 
     const availabilityLabel =
       availability.status === "in_stock"
-        ? "有货 / In Stock"
+        ? "In Stock"
         : availability.status === "out_of_stock"
-        ? "售罄 / Out of Stock"
-        : "未知 / Unknown";
+        ? "Out of Stock"
+        : "Unknown";
 
     const notification = availabilityChanged
       ? {
           title: summarizeChangeTitle("target", target),
           text: [
             sourceDisplayName(target),
-            `库存状态: ${availabilityLabel}`,
-            `识别依据: ${availability.detail}`,
-            `页面标题: ${title}`,
-            `打开: ${target.open_url || target.url}`,
+            `Availability: ${availabilityLabel}`,
+            `Signal: ${availability.detail}`,
+            `Page Title: ${title}`,
+            `Open: ${target.open_url || target.url}`,
           ].join("\n"),
         }
       : null;
